@@ -1,0 +1,455 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>日々のリマインダー</title>
+  <style>
+    body {
+      font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+      margin: 0;
+      padding: 0 20px;
+      background: #f9f9f9;
+      color: #333;
+    }
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 15px 0;
+      border-bottom: 1px solid #ccc;
+      flex-wrap: wrap;
+    }
+    .title-area h1 {
+      margin: 0;
+      font-size: 1.8rem;
+    }
+    .title-area p {
+      margin: 4px 0 0 0;
+      font-size: 1rem;
+      color: #007bff;
+      cursor: pointer;
+      text-decoration: underline;
+      user-select: none;
+    }
+    main {
+      max-width: 600px;
+      margin: 20px auto;
+    }
+    section {
+      background: white;
+      padding: 15px;
+      margin-bottom: 20px;
+      border-radius: 8px;
+      box-shadow: 0 0 5px rgba(0,0,0,0.1);
+    }
+    h2 {
+      margin-top: 0;
+      font-size: 1.3rem;
+      border-bottom: 1px solid #ddd;
+      padding-bottom: 5px;
+      color: #444;
+    }
+    h3 {
+      margin: 0 0 0.5em 0;
+      font-size: 1.1rem;
+      color: #555;
+    }
+    form {
+      display: flex;
+      gap: 10px;
+      margin-top: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    form input[type="time"],
+    form input[type="text"] {
+      flex: 1 1 120px;
+      padding: 8px 10px;
+      font-size: 1rem;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+    }
+    form button {
+      padding: 8px 16px;
+      font-size: 1rem;
+      background-color: #007bff;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      flex: 0 0 auto;
+    }
+    form button:hover {
+      background-color: #0056b3;
+    }
+    ul {
+      padding-left: 20px;
+    }
+    li {
+      margin-bottom: 6px;
+    }
+    footer {
+      text-align: center;
+      padding: 10px 0;
+      font-size: 0.9rem;
+      color: #999;
+      border-top: 1px solid #ddd;
+      margin-top: 40px;
+    }
+    #date-picker {
+      display: none;
+    }
+    /* 削除ボタンのスタイル */
+    .delete-btn {
+      margin-left: 10px;
+      background: #e74c3c;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      padding: 2px 8px;
+      cursor: pointer;
+    }
+    .delete-btn:hover {
+      background: #c0392b;
+    }
+    #logout-btn {
+      background-color: #dc3545;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      padding: 6px 12px;
+      cursor: pointer;
+      font-size: 1rem;
+    }
+    #logout-btn:hover {
+      background-color: #a71d2a;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="title-area">
+      <h1>📅 日々のリマインダー</h1>
+      <p id="today-date" title="クリックして日付を変更"></p>
+      <input type="date" id="date-picker" />
+    </div>
+    <button id="logout-btn">ログアウト</button>
+  </header>
+
+  <section class="weather-info" style="background:#fff; padding:15px; border-radius:8px; box-shadow: 0 0 5px rgba(0,0,0,0.1); max-width:600px; margin:0 auto 20px;">
+    <h2>現在の天気</h2>
+    <div id="weather-city">読み込み中...</div>
+    <div id="weather-text"></div>
+  </section>
+
+
+  <main>
+    <section class="reminder-list">
+      <h2>本日の予定</h2>
+      <ul id="reminders">読み込み中...</ul>
+    </section>
+
+    <form id="reminder-form">
+      <input type="time" id="reminder-time" required />
+      <input type="text" id="reminder-title" placeholder="内容（例：買い物）" required />
+      <button type="submit">追加</button>
+    </form>
+
+    <section class="reminder-list">
+      <h2>予定一覧（7日間）</h2>
+      <div id="reminder-calendar"></div>
+    </section>
+  </main>
+
+  <footer>
+    <p>© 2025 日々のリマインダー</p>
+  </footer>
+
+  <!-- Firebase SDK -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+
+  <script>
+    const firebaseConfig = {
+      apiKey: "YOUR_FIREBASE_API_KEY_HERE",
+      authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
+      projectId: "YOUR_PROJECT_ID",
+    };
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.firestore();
+
+    let currentUser = null;
+    let remindersData = {};
+    let selectedDate = new Date();
+    selectedDate.setHours(0, 0, 0, 0);
+
+    // ログイン状態
+    firebase.auth().onAuthStateChanged((user) => {
+      if (!user) {
+        window.location.href = "login.html";
+      } else {
+        currentUser = user;
+        loadRemindersFromFirestore(user.uid);
+      }
+    });
+
+    function loadRemindersFromFirestore(uid) {
+      db.collection("users").doc(uid).get().then(doc => {
+        if (doc.exists && doc.data()?.reminders) {
+          remindersData = doc.data().reminders;
+        } else {
+          remindersData = {};
+        }
+        updateSelectedDate(selectedDate);
+      });
+    }
+
+    function saveRemindersToFirestore(uid) {
+      db.collection("users").doc(uid).set({ reminders: remindersData }, { merge: true });
+    }
+
+    const todayDateElem = document.getElementById("today-date");
+    const datePicker = document.getElementById("date-picker");
+    const remindersUl = document.getElementById("reminders");
+    const reminderForm = document.getElementById("reminder-form");
+    const reminderTimeInput = document.getElementById("reminder-time");
+    const reminderTitleInput = document.getElementById("reminder-title");
+    const reminderCalendar = document.getElementById("reminder-calendar");
+    const logoutBtn = document.getElementById("logout-btn");
+
+    function formatDate(date) {
+      return date.toISOString().slice(0, 10);
+    }
+
+    function formatDisplayDate(date) {
+      const days = ["日","月","火","水","木","金","土"];
+      return `${date.getFullYear()}年${date.getMonth()+1}月${date.getDate()}日（${days[date.getDay()]}）`;
+    }
+
+    function updateSelectedDate(date) {
+      selectedDate = date;
+      todayDateElem.textContent = formatDisplayDate(date);
+      datePicker.value = formatDate(date);
+      renderRemindersForSelectedDate();
+      renderReminderCalendar();
+      updateWeatherForDate(date); 
+    }
+
+    todayDateElem.addEventListener("click", () => {
+      if (datePicker.showPicker) {
+        datePicker.showPicker();
+      } else {
+        datePicker.style.display = "inline-block";
+        datePicker.focus();
+      }
+    });
+
+    datePicker.addEventListener("change", (e) => {
+      const picked = new Date(e.target.value);
+      if (!isNaN(picked)) {
+        picked.setHours(0,0,0,0);
+        updateSelectedDate(picked);
+      }
+      if (!datePicker.showPicker) {
+        datePicker.style.display = "none";
+      }
+    });
+
+    function renderRemindersForSelectedDate() {
+      const key = formatDate(selectedDate);
+      const items = remindersData[key] || [];
+      remindersUl.innerHTML = "";
+      if (items.length === 0) {
+        remindersUl.textContent = "予定はありません。";
+        return;
+      }
+      items.forEach((r, index) => {
+        const li = document.createElement("li");
+        li.style.display = "flex";
+        li.style.justifyContent = "space-between";
+        li.style.alignItems = "center";
+
+        const textSpan = document.createElement("span");
+        textSpan.textContent = `${r.time} - ${r.title}`;
+        li.appendChild(textSpan);
+
+        const delBtn = document.createElement("button");
+        delBtn.textContent = "削除";
+        delBtn.className = "delete-btn";
+        delBtn.addEventListener("click", () => {
+          remindersData[key].splice(index, 1);
+          renderRemindersForSelectedDate();
+          renderReminderCalendar();
+          saveRemindersToFirestore(currentUser.uid);
+        });
+        li.appendChild(delBtn);
+        remindersUl.appendChild(li);
+      });
+    }
+
+    reminderForm.addEventListener("submit", (e) => {
+      e.preventDefault();
+      const time = reminderTimeInput.value;
+      const title = reminderTitleInput.value.trim();
+
+      if (!time || !title) {
+        alert("時間と内容を入力してください。");
+        return;
+      }
+
+      const key = formatDate(selectedDate);
+      if (!remindersData[key]) {
+        remindersData[key] = [];
+      }
+      remindersData[key].push({ time, title });
+      reminderForm.reset();
+      renderRemindersForSelectedDate();
+      renderReminderCalendar();
+      saveRemindersToFirestore(currentUser.uid);
+    });
+
+    function renderReminderCalendar() {
+      reminderCalendar.innerHTML = "";
+      const today = new Date();
+      today.setHours(0,0,0,0);
+      today.setDate(today.getDate() + 1);
+
+      for (let i = 0; i < 7; i++) {
+        const d = new Date(today);
+        d.setDate(today.getDate() + i);
+        const key = formatDate(d);
+        const items = remindersData[key] || [];
+
+        const section = document.createElement("section");
+        section.style.marginBottom = "1em";
+
+        const h3 = document.createElement("h3");
+        h3.textContent = formatDisplayDate(d);
+        section.appendChild(h3);
+
+        if (items.length === 0) {
+          const p = document.createElement("p");
+          p.textContent = "予定はありません。";
+          section.appendChild(p);
+        } else {
+          const ul = document.createElement("ul");
+          for (const r of items) {
+            const li = document.createElement("li");
+            li.textContent = `${r.time} - ${r.title}`;
+            ul.appendChild(li);
+          }
+          section.appendChild(ul);
+        }
+        reminderCalendar.appendChild(section);
+      }
+    }
+
+    logoutBtn.addEventListener("click", () => {
+      firebase.auth().signOut().then(() => {
+        window.location.href = "login.html";
+      }).catch((error) => {
+        alert("ログアウトに失敗しました：" + error.message);
+      });
+    });
+
+    let weatherForecasts = {}; // 複数日の天気データを保存し、キーは 'YYYY-MM-DD' 形式とする
+
+// 5日間・3時間ごとの予報を取得するように変更する
+    async function loadWeather() {
+      const apiKey = "YOUR_API_KEY_HERE";
+      const cityElem = document.getElementById("weather-city");
+      const weatherTextElem = document.getElementById("weather-text");
+
+      if (!navigator.geolocation) {
+        cityElem.textContent = "位置情報が取得できません。";
+        weatherTextElem.textContent = "";
+        return;
+      }
+
+      navigator.geolocation.getCurrentPosition(
+        async (pos) => {
+          const lat = pos.coords.latitude;
+          const lon = pos.coords.longitude;
+          await fetchWeatherForecast(lat, lon);
+          updateWeatherForDate(selectedDate);  // 初回表示時に選択された日の天気を表示する
+        },
+        async (err) => {
+          console.warn("位置情報エラー。Tokyoにフォールバック", err);
+          // 東京の緯度・経度を固定する
+          await fetchWeatherForecast(35.68, 139.76);
+          updateWeatherForDate(selectedDate);
+        }
+      );
+
+      async function fetchWeatherForecast(lat, lon) {
+        const url = `https://api.openweathermap.org/data/2.5/forecast?lat=${lat}&lon=${lon}&appid=${apiKey}&lang=ja&units=metric`;
+        try {
+          const res = await fetch(url);
+          const data = await res.json();
+
+          cityElem.textContent = `現在の都市: ${data.city.name}`;
+
+          // 古いデータをクリアする
+          weatherForecasts = {};
+
+          // data.list 3時間ごとの予報の配列です
+          // 3時間ごとの予報を日付ごとにグループ化する
+          data.list.forEach(item => {
+            const date = item.dt_txt.slice(0, 10); // yyyy-mm-dd
+            if (!weatherForecasts[date]) weatherForecasts[date] = [];
+            weatherForecasts[date].push(item);
+          });
+        } catch (e) {
+          cityElem.textContent = "";
+          weatherTextElem.textContent = "⚠️ 天気情報を取得できませんでした。";
+          console.error(e);
+        }
+      }
+    }
+
+    // 日付に基づいて天気表示を更新する
+    function updateWeatherForDate(date) {
+      const weatherTextElem = document.getElementById("weather-text");
+      const key = date.toISOString().slice(0, 10); // yyyy-mm-dd
+
+      if (!weatherForecasts[key]) {
+        weatherTextElem.textContent = "その日の天気予報はありません。";
+        return;
+      }
+
+      // 単純に当日の最初の時間帯のデータを全天の代表として使用する（より複雑なアルゴリズムに変更可能）
+      const weatherData = weatherForecasts[key][0];
+
+      const weather = weatherData.weather[0].main;
+      const description = weatherData.weather[0].description;
+      const temp = weatherData.main.temp;
+
+      let advice = "";
+      if (weather === "Rain" || weather === "Drizzle" || weather === "Thunderstorm") {
+        advice = "🌧 雨が予想されます。傘を忘れずに！";
+      } else if (weather === "Clear") {
+        advice = "☀️ 晴れの予報です。紫外線対策を忘れずに！";
+      } else if (weather === "Clouds") {
+        advice = "☁️ 曇りの予報です。過ごしやすい天気です。";
+      } else if (weather === "Snow") {
+        advice = "❄️ 雪の予報です。暖かくしてください。";
+      } else {
+        advice = `🌡 天気：${description}`;
+      }
+
+      weatherTextElem.textContent = `${advice}（予想気温 ${temp.toFixed(1)}℃）`;
+    }
+
+  
+    // ページロード時に天気情報取得
+    window.addEventListener("load", () => {
+      loadWeather();
+    });
+
+  </script>
+</body>
+</html>
+
+
